@@ -1,0 +1,80 @@
+#!/bin/bash
+#
+#	given a database query output file in the format ID MD5, outputs a curl config file with the corresponding download urls
+#
+
+cutdbid ()
+{
+	dbidfile=$1.dbid.$$.txt
+	cut -d "|" -f 2 $1 > /tmp/$dbidfile
+}
+
+if [ $# -ne 2 ]
+then
+	echo "Usage : <input> <output>"
+	exit 1
+fi
+#	cut ID and MD5 in separate temp files
+cutdbid $1
+
+outputfile=$2	# curl config filename
+out=lgpage$$ # curl temp config file for html pages retrieval
+out2=lgpagedl$$
+#	fake user-agent
+UA="Mozilla/5.0"
+#	libgen url format
+BURL="https://libgen.pw/item/detail/id/"
+REFURL="https://libgen.pw/item/adv/"
+DURL="https://libgen.pw/download/book/"
+num=0
+for DBID in $(cat /tmp/$dbidfile)
+do
+	URL=$BURL$DBID
+	echo "-A $UA" >> /tmp/$out
+	echo "-k" >> /tmp/$out
+	echo "-o \"page.$$.$num\"" >> /tmp/$out
+	echo "--url \"$URL\"" >>  /tmp/$out
+	echo >> /tmp/$out
+	$(( num++ )) 2> /dev/null
+	
+done
+cnt=$num
+$(( cnt-- )) 2> /dev/null
+cd /tmp/
+curl -K $out
+for num in $(seq 0 $cnt)
+do
+	TOKEN=$(grep "item/adv"  page.$$.$num | awk -F '"' '{ print $4 }' | cut -d '/' -f 4)
+	tokens[$num]="$TOKEN"
+	REF=$REFURL$TOKEN
+	echo "-A $UA" >> /tmp/$out2
+	echo "-k" >> /tmp/$out2
+	echo "-o \"pagedl.$$.$num\"" >> /tmp/$out2
+	echo "--url \"$REF\"" >>  /tmp/$out2
+	echo >> /tmp/$out2
+done
+curl -K $out2
+cd ~-
+for num in $(seq 0 $cnt)
+do
+	author=$(grep author /tmp/pagedl.$$.$num | tr -d [{},] | cut -d '=' -f2 | tr -s " " | cut --complement -b 1)
+	title=$(grep 'title =' /tmp/pagedl.$$.$num | tr -d [{},] | cut -d '=' -f2 | tr -s " ")
+	ext=$(grep 'type =' /tmp/pagedl.$$.$num | tr -d [{},] | cut -d '=' -f2 | tr -d " ")
+	filename="$author$title.$ext"
+	DLURL=$DURL${tokens[$num]}
+	REFR=$REFURL${tokens[$num]}
+	echo "-A $UA" >> $outputfile
+	echo "-e $REFR" >> $outputfile
+	echo "-k" >> $outputfile
+	echo "-g" >> $outputfile
+	echo "-o \"$filename\"" >> $outputfile
+	echo "--url \"$DLURL\"" >> $outputfile
+	echo >> $outputfile
+done
+
+cd /tmp/
+id=$$
+for file in *$id*
+do
+	rm "$file"
+done
